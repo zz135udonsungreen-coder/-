@@ -26,6 +26,7 @@ const roundKindDisplay = document.querySelector("#round-kind");
 const levelBadge = document.querySelector("#level-badge");
 const gameMessage = document.querySelector("#game-message");
 const actionButton = document.querySelector("#action-button");
+const gameExitButton = document.querySelector("#game-exit-button");
 const restartButton = document.querySelector("#restart-button");
 const progressDots = Array.from(document.querySelectorAll(".progress-dot"));
 const groupScoreDisplays = Array.from(
@@ -303,6 +304,7 @@ function beginRound() {
   direction = 1;
   previousFrame = 0;
   state = "playing";
+  gameExitButton.hidden = false;
   renderProgress();
   meterValue = activeMeterMinimum;
   renderPlayerProfile();
@@ -412,11 +414,32 @@ function stopRound() {
 
   renderProgress();
   if (state === "complete") {
+    gameExitButton.hidden = true;
     gameCard.hidden = true;
     renderPlayerProfile();
     recordMessage.textContent = "";
     saveFinalRecord(renderFinalResults());
   }
+}
+
+function exitGame() {
+  if (!window.confirm("ゲームを終了しますか？現在のプレイ内容は保存されません。")) return;
+
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
+
+  state = "ready";
+  round = 1;
+  roundResults = Array(totalRounds).fill(null);
+  gameExitButton.hidden = true;
+  gameCard.hidden = false;
+  actionButton.textContent = "スタート";
+  gameMessage.textContent = "ゲームを終了しました。もう一度挑戦するにはスタートを押してください。";
+  renderProgress();
+  renderMeter();
+  renderPlayerProfile();
 }
 
 playerForm.addEventListener("submit", (event) => {
@@ -468,6 +491,7 @@ actionButton.addEventListener("click", () => {
   }
 });
 
+gameExitButton.addEventListener("click", exitGame);
 restartButton.addEventListener("click", startGame);
 
 try {

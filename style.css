@@ -180,6 +180,16 @@ h1 {
   background: #edf4f4;
 }
 
+.game-exit-button {
+  width: 100%;
+  margin-top: 12px;
+  color: #8a4c4c;
+}
+
+.game-exit-button:hover {
+  background: #fff1ef;
+}
+
 .secondary-button:focus-visible {
   outline: 3px solid #efad5c;
   outline-offset: 3px;
