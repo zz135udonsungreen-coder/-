@@ -6,6 +6,12 @@
     <meta name="theme-color" content="#f3f5f8">
     <title>ぴったりメーター</title>
     <link rel="stylesheet" href="style.css">
+    <script>
+      window.SUPABASE_CONFIG = {
+        url: "",
+        anonKey: "",
+      };
+    </script>
     <script src="game.js" defer></script>
   </head>
   <body>
@@ -24,7 +30,7 @@
 
       <section class="player-panel" id="player-panel" aria-labelledby="player-title">
         <h2 id="player-title">プレイヤー登録</h2>
-        <p class="player-note">ユーザー名とプレイ記録は、このブラウザー内に保存されます。</p>
+        <p class="player-note">ユーザー名はこのブラウザー内に保存されます。Supabase設定後、プレイ記録を共有ランキングに保存できます。</p>
         <p class="storage-message" id="player-message" role="status" aria-live="polite"></p>
         <form class="player-form" id="player-form">
           <label for="player-name">ユーザー名</label>
@@ -135,6 +141,8 @@
           <li id="criterion-hl"><span id="criterion-hl-text"></span><strong id="criterion-hl-status"></strong></li>
           <li id="criterion-sl"><span id="criterion-sl-text"></span><strong id="criterion-sl-status"></strong></li>
         </ul>
+        <button class="secondary-button share-button" id="share-button" type="button">結果を共有</button>
+        <p class="share-message" id="share-message" role="status" aria-live="polite"></p>
         <button class="action-button" id="restart-button" type="button">もう一度挑戦</button>
       </section>
 

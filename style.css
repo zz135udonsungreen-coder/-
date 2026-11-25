@@ -642,6 +642,27 @@ h1 {
   color: #b94f45;
 }
 
+.share-button {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.share-message {
+  margin: 8px 0 0;
+  color: #287452;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.share-message.is-error {
+  color: #b94f45;
+}
+
+.share-message:empty {
+  display: none;
+}
+
 .leaderboard {
   margin-top: 18px;
 }

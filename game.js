@@ -28,6 +28,8 @@ const gameMessage = document.querySelector("#game-message");
 const actionButton = document.querySelector("#action-button");
 const gameExitButton = document.querySelector("#game-exit-button");
 const restartButton = document.querySelector("#restart-button");
+const shareButton = document.querySelector("#share-button");
+const shareMessage = document.querySelector("#share-message");
 const progressDots = Array.from(document.querySelectorAll(".progress-dot"));
 const groupScoreDisplays = Array.from(
   { length: subjectCount },
@@ -64,12 +66,16 @@ let previousFrame = 0;
 let animationFrameId = null;
 let playerName = "";
 let gameRecords = [];
+let sharedRecords = null;
 let editingName = false;
 let storageError = "";
+let sharedRankingError = "";
+let supabaseConfig = null;
 
 function isStoredRecord(record) {
   return record !== null
     && typeof record === "object"
+    && (record.id === undefined || typeof record.id === "string")
     && typeof record.playerName === "string"
     && record.playerName.trim() !== ""
     && Array.isArray(record.subjectScores)
@@ -126,6 +132,104 @@ function writeSavedData(nextPlayerName, records) {
   }
 }
 
+function getSupabaseConfig() {
+  const config = window.SUPABASE_CONFIG;
+  if (!config || (!config.url && !config.anonKey)) return null;
+  if (
+    typeof config.url !== "string"
+    || !/^https:\/\/[^/]+$/.test(config.url)
+    || typeof config.anonKey !== "string"
+    || !config.anonKey.trim()
+  ) {
+    throw new Error("SupabaseのURLまたは公開用キーの設定を確認してください。");
+  }
+  return { url: config.url, anonKey: config.anonKey };
+}
+
+async function requestSupabase(path, options = {}) {
+  let response;
+  try {
+    response = await fetch(`${supabaseConfig.url}/rest/v1/${path}`, {
+      ...options,
+      headers: {
+        apikey: supabaseConfig.anonKey,
+        Authorization: `Bearer ${supabaseConfig.anonKey}`,
+        ...options.headers,
+      },
+    });
+  } catch {
+    throw new Error("共有ランキングに接続できません。ネットワークを確認してください。");
+  }
+
+  if (!response.ok) {
+    throw new Error(`共有ランキングの同期に失敗しました（HTTP ${response.status}）。Supabaseのテーブルと権限設定を確認してください。`);
+  }
+  return response;
+}
+
+function makeRecordId() {
+  return window.crypto?.randomUUID?.()
+    ?? `record-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function mapSharedRecord(record) {
+  return {
+    id: record.id,
+    playerName: record.player_name,
+    subjectScores: record.subject_scores,
+    tokGrade: record.tok_grade,
+    eeGrade: record.ee_grade,
+    total: record.total,
+    passed: record.passed,
+    completedAt: record.completed_at,
+  };
+}
+
+async function syncSharedRanking() {
+  if (!supabaseConfig) return;
+
+  const recordsWithIds = gameRecords.map((record) => (
+    record.id ? record : { ...record, id: makeRecordId() }
+  ));
+  if (recordsWithIds.some((record, index) => record !== gameRecords[index])) {
+    const error = writeSavedData(playerName, recordsWithIds);
+    if (error) throw new Error(error);
+    gameRecords = recordsWithIds;
+  }
+
+  for (let offset = 0; offset < gameRecords.length; offset += 100) {
+    const batch = gameRecords.slice(offset, offset + 100).map((record) => ({
+      id: record.id,
+      player_name: record.playerName,
+      subject_scores: record.subjectScores,
+      tok_grade: record.tokGrade,
+      ee_grade: record.eeGrade,
+      total: record.total,
+      passed: record.passed,
+      completed_at: record.completedAt,
+    }));
+    await requestSupabase("game_records?on_conflict=id", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify(batch),
+    });
+  }
+
+  const response = await requestSupabase(
+    "game_records?select=id,player_name,subject_scores,tok_grade,ee_grade,total,passed,completed_at&order=total.desc,completed_at.asc&limit=100",
+  );
+  const records = await response.json();
+  if (!Array.isArray(records) || !records.every((record) => isStoredRecord(mapSharedRecord(record)))) {
+    throw new Error("共有ランキングのデータ形式が正しくありません。");
+  }
+  sharedRecords = records.map(mapSharedRecord);
+  sharedRankingError = "";
+  renderLeaderboard();
+}
+
 function renderPlayerProfile() {
   playerPanel.hidden = state === "playing" || state === "result";
   playerForm.hidden = Boolean(playerName) && !editingName;
@@ -146,12 +250,20 @@ function renderLeaderboard() {
     leaderboardMessage.textContent = storageError;
     return;
   }
-  if (gameRecords.length === 0) {
+  if (sharedRankingError) {
+    leaderboardMessage.textContent = sharedRankingError;
+  } else if (supabaseConfig && sharedRecords === null) {
+    leaderboardMessage.textContent = "共有ランキングを読み込んでいます…";
+  } else if (!supabaseConfig) {
+    leaderboardMessage.textContent = "端末間で共有するには、index.htmlにSupabaseの接続情報を設定してください。";
+  } else if (sharedRecords.length === 0) {
     leaderboardMessage.textContent = "まだプレイ記録はありません。ゲーム終了後にここへ保存されます。";
-    return;
+  } else {
+    leaderboardMessage.textContent = "全端末共通のランキング（上位100件）";
   }
 
-  const sortedRecords = [...gameRecords].sort((first, second) => (
+  const records = supabaseConfig && sharedRecords !== null ? sharedRecords : gameRecords;
+  const sortedRecords = [...records].sort((first, second) => (
     second.total - first.total
     || Date.parse(first.completedAt) - Date.parse(second.completedAt)
   ));
@@ -318,6 +430,8 @@ function startGame() {
   if (!playerName || storageError) return;
   round = 1;
   roundResults = Array(totalRounds).fill(null);
+  shareMessage.textContent = "";
+  shareMessage.classList.remove("is-error");
   gameCard.hidden = false;
   finalResults.hidden = true;
   finalGrade.classList.remove("grade--pass", "grade--fail");
@@ -373,8 +487,44 @@ function renderFinalResults() {
   return { subjectScores, tokGrade, eeGrade, total, passed };
 }
 
+async function shareFinalResult() {
+  const { subjectScores, tokGrade, eeGrade, total, passed } = getTotals();
+  const text = [
+    `${playerName} の「ぴったりメーター」結果`,
+    `${passed ? "合格" : "不合格"}：総合 ${total}/45点`,
+    `Group ${subjectScores.join(" / ")}｜TOK ${tokGrade}・EE ${eeGrade}`,
+    window.location.href,
+  ].join("\n");
+
+  shareButton.disabled = true;
+  shareMessage.textContent = "";
+  shareMessage.classList.remove("is-error");
+  try {
+    if (typeof navigator.share === "function") {
+      await navigator.share({
+        title: "ぴったりメーターの結果",
+        text,
+      });
+      shareMessage.textContent = "結果を共有しました。";
+    } else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      shareMessage.textContent = "共有用の結果をコピーしました。";
+    } else {
+      throw new Error("このブラウザーでは共有できません。HTTPSで開くか、対応ブラウザーをお使いください。");
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      shareMessage.textContent = error.message || "結果を共有できませんでした。";
+      shareMessage.classList.add("is-error");
+    }
+  } finally {
+    shareButton.disabled = false;
+  }
+}
+
 function saveFinalRecord({ subjectScores, tokGrade, eeGrade, total, passed }) {
   const record = {
+    ...(supabaseConfig ? { id: makeRecordId() } : {}),
     playerName,
     subjectScores: [...subjectScores],
     tokGrade,
@@ -391,8 +541,22 @@ function saveFinalRecord({ subjectScores, tokGrade, eeGrade, total, passed }) {
   }
 
   gameRecords = nextRecords;
-  recordMessage.textContent = `${playerName} さんの記録を保存しました。`;
   renderLeaderboard();
+  if (!supabaseConfig) {
+    recordMessage.textContent = `${playerName} さんの記録をこの端末に保存しました。共有設定はまだ完了していません。`;
+    return;
+  }
+
+  recordMessage.textContent = `${playerName} さんの記録を保存しました。共有ランキングに同期しています…`;
+  syncSharedRanking()
+    .then(() => {
+      recordMessage.textContent = `${playerName} さんの記録を共有ランキングに保存しました。`;
+    })
+    .catch((error) => {
+      sharedRankingError = error.message;
+      recordMessage.textContent = `この端末には保存しましたが、共有ランキングへの同期に失敗しました：${error.message}`;
+      renderLeaderboard();
+    });
 }
 
 function stopRound() {
@@ -493,6 +657,7 @@ actionButton.addEventListener("click", () => {
 
 gameExitButton.addEventListener("click", exitGame);
 restartButton.addEventListener("click", startGame);
+shareButton.addEventListener("click", shareFinalResult);
 
 try {
   const savedData = readSavedData();
@@ -502,9 +667,21 @@ try {
   storageError = error.message;
 }
 
+try {
+  supabaseConfig = getSupabaseConfig();
+} catch (error) {
+  sharedRankingError = error.message;
+}
+
 gameCard.hidden = !playerName || Boolean(storageError);
 renderPlayerProfile();
 renderLeaderboard();
 renderRoundInfo();
 renderMeter();
 renderScores();
+if (supabaseConfig) {
+  syncSharedRanking().catch((error) => {
+    sharedRankingError = error.message;
+    renderLeaderboard();
+  });
+}
